@@ -1,0 +1,17 @@
+[package]
+name = "recovery_registry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+casper-contract = { workspace = true }
+casper-types = { workspace = true }
+guardian-types = { path = "../types" }
+
+[[bin]]
+name = "recovery_registry"
+path = "src/main.rs"
+bench = false
+doctest = false
+test = false
