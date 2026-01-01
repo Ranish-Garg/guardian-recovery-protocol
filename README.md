@@ -22,15 +22,15 @@ Guardian Recovery Protocol enables **decentralized, cryptographic account recove
 
 ## Key Features
 
-✅ **Decentralized & Trustless** - No centralized authority controls recovery
-✅ **Guardian-Based Recovery** - Your trusted friends/services act as guardians
-✅ **Multi-Signature Threshold** - Requires consensus (e.g., 2 of 3 guardians)
-✅ **Cryptographically Secure** - All signatures verified on-chain
-✅ **30-Day Safety Period** - Time to cancel or find your original key
-✅ **Open-Source & Auditable** - Complete transparency, anyone can verify
-✅ **Built on Casper Network** - Leverages Casper's native multi-sig capabilities
-✅ **Replay Attack Prevention** - Nonce and timestamp validation
-✅ **Account Isolation** - Cross-account hijacking is cryptographically impossible
+- ✅ **Decentralized & Trustless** - No centralized authority controls recovery
+- ✅ **Guardian-Based Recovery** - Your trusted friends/services act as guardians
+- ✅ **Multi-Signature Threshold** - Requires consensus (e.g., 2 of 3 guardians)
+- ✅ **Cryptographically Secure** - All signatures verified on-chain
+- ✅ **30-Day Safety Period** - Time to cancel or find your original key
+- ✅ **Open-Source & Auditable** - Complete transparency, anyone can verify
+- ✅ **Built on Casper Network** - Leverages Casper's native multi-sig capabilities
+- ✅ **Replay Attack Prevention** - Nonce and timestamp validation
+- ✅ **Account Isolation** - Cross-account hijacking is cryptographically impossible
 
 ## Architecture
 
@@ -149,18 +149,23 @@ Cannot execute immediately. 30-day delay provides safety net to cancel or verify
 ## Security Guarantees
 
 **Q: Can someone enter a random account hash and hijack it?**
+
 A: No. Smart contract verifies signer is in THAT account's guardian list. Wrong key = rejected.
 
 **Q: Can someone use their guardian key on another's account?**
+
 A: No. Guardian keys are account-specific. Database stores separate guardian lists per account.
 
 **Q: Can signatures be forged?**
+
 A: No. Cryptographic signature verification makes forgery mathematically impossible.
 
 **Q: Can recovery happen before 30 days?**
+
 A: No. Smart contract checks block time. Before 30 days = execution fails.
 
 **Q: Can a single guardian recover the account alone?**
+
 A: No. Threshold enforcement requires consensus (e.g., 2 of 3 guardians).
 
 ## Use Cases
@@ -500,18 +505,20 @@ npm test                      # Frontend tests
 ## Threat Model
 
 ### Threats Mitigated
-✅ Private key loss (account recovery enabled)
-✅ Private key theft (30-day delay + guardian consensus)
-✅ Unauthorized recovery (guardian key required + threshold)
-✅ Replay attacks (nonce & timestamp validation)
-✅ Cross-account hijacking (account-specific verification)
-✅ Single guardian attack (threshold enforcement)
-✅ Centralized authority control (smart contract is truth)
+
+- ✅ Private key loss (account recovery enabled)
+- ✅ Private key theft (30-day delay + guardian consensus)
+- ✅ Unauthorized recovery (guardian key required + threshold)
+- ✅ Replay attacks (nonce & timestamp validation)
+- ✅ Cross-account hijacking (account-specific verification)
+- ✅ Single guardian attack (threshold enforcement)
+- ✅ Centralized authority control (smart contract is truth)
 
 ### Threats Not Covered
-❌ Guardian key compromise (mitigated by threshold + 30-day delay)
-❌ Loss of all guardian keys (design trade-off: human recovery needed)
-❌ Social engineering of all guardians (requires multiple coordinated attacks)
+
+- ❌ Guardian key compromise (mitigated by threshold + 30-day delay)
+- ❌ Loss of all guardian keys (design trade-off: human recovery needed)
+- ❌ Social engineering of all guardians (requires multiple coordinated attacks)
 
 
 ## Acknowledgments
