@@ -15,7 +15,7 @@ import {
   getProvider
 } from "@/lib/casper-wallet"
 
-import { registerGuardians, submitDeploy, getDeployStatus, getGuardians, hasGuardians ,buildAddKeyDeploy, buildUpdateThresholdsDeploy} from "@/lib/api"
+import { registerGuardians, submitDeploy, getDeployStatus, getGuardians, hasGuardians, buildAddKeyDeploy, buildUpdateThresholdsDeploy } from "@/lib/api"
 
 import { isValidCasperAddress, getAddressValidationError } from "@/lib/validation"
 import gsap from "gsap"
@@ -66,13 +66,13 @@ export default function SetupPage() {
   useEffect(() => {
     const fetchExistingGuardians = async () => {
       if (!account) return
-      
+
       // Check if we already have guardians in localStorage
       const storageKey = `guardians_${account}`
       if (localStorage.getItem(storageKey)) {
         return // Already loaded from localStorage
       }
-      
+
       setIsLoadingGuardians(true)
       try {
         // Use hasGuardians to check if guardians are registered
@@ -89,7 +89,7 @@ export default function SetupPage() {
           // Parse and sign the deploy
           const deployJson = result.data.deployJson
           const deployString = typeof deployJson === 'string' ? deployJson : JSON.stringify(deployJson)
-          
+
           const response = await provider.sign(deployString, account)
           if (response.cancelled) {
             setIsLoadingGuardians(false)
@@ -119,18 +119,18 @@ export default function SetupPage() {
           // Submit the signed deploy
           const signedDeployJson = DeployUtil.deployToJson(deploy)
           const submitResult = await submitDeploy(JSON.stringify(signedDeployJson))
-          
+
           if (submitResult.success && submitResult.data?.deployHash) {
             // Poll for result - if successful, guardians exist
             const pollForResult = async (hash: string) => {
               for (let i = 0; i < 15; i++) {
                 await new Promise(resolve => setTimeout(resolve, 3000))
                 const statusResult = await getDeployStatus(hash)
-                
+
                 if (statusResult.success && statusResult.data) {
                   const deployData = statusResult.data
                   // Check execution_results
-                  if (deployData[1]?.execution_results?.[0]?.result?.Success) {
+                  if (deployData.status === "success") {
                     // Guardians exist - show a message that they're registered
                     // Since we can't fetch the actual guardian addresses from session WASM,
                     // we'll just indicate that guardians are already configured
@@ -138,7 +138,7 @@ export default function SetupPage() {
                     // Set a placeholder to indicate guardians exist but we can't fetch them
                     setRegisteredGuardians(["Protectors already configured for this account"])
                     break
-                  } else if (deployData[1]?.execution_results?.[0]?.result?.Failure) {
+                  } else if (deployData.status === "failed") {
                     // No guardians or error
                     break
                   }
@@ -390,14 +390,14 @@ export default function SetupPage() {
       setSaveError(`Invalid protector addresses. Please check all entries.`)
       return
     }
-    
+
     // Check that no guardian is the same as the user account
     const selfAsGuardian = validGuardians.some(g => g.trim().toLowerCase() === account.toLowerCase())
     if (selfAsGuardian) {
       setSaveError(`You cannot add yourself as a protector. Protectors must be different accounts.`)
       return
     }
-    
+
     // Check for duplicate guardians
     const uniqueGuardians = new Set(validGuardians.map(g => g.trim().toLowerCase()))
     if (uniqueGuardians.size !== validGuardians.length) {
@@ -508,12 +508,10 @@ export default function SetupPage() {
       messages.push("🎉 Setup complete! Guardians now have recovery power.")
       setStepMessages([...messages])
 
-      // Store deploy hash and start polling
-      setDeployHash(submitResult.data?.deployHash || null)
-      setDeployStatus("pending")
+
       setSaveSuccess(true)
       setRegisteredGuardians(validGuardians)
-      
+
       // Save to localStorage for persistence across page refreshes
       if (typeof window !== 'undefined') {
         const storageKey = `guardians_${account}`
@@ -537,7 +535,7 @@ export default function SetupPage() {
       {/* Navigation */}
       <nav className="relative z-10 border-b border-border/30 px-6 md:px-28 py-6">
         <div className="flex items-center justify-between">
-          <a href="/" className="font-[var(--font-bebas)] text-2xl tracking-tight hover:text-accent transition-colors">
+          <a href="/" className="font-[(--font-bebas)] text-2xl tracking-tight hover:text-accent transition-colors">
             SENTINELX
           </a>
           <div className="flex items-center gap-6">
@@ -755,8 +753,7 @@ export default function SetupPage() {
                     className="group inline-flex items-center gap-3 border border-foreground/20 px-8 py-4 font-mono text-xs uppercase tracking-widest text-foreground hover:border-accent hover:text-accent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-foreground/20 disabled:hover:text-foreground"
                   >
                     <ScrambleTextOnHover
-                      text={isSaving ? "Processing..." : saveSuccess ? "Setup Complete ✓" : "Setup Guardians"}
-                      text={isSaving ? "Signing..." : "Save Protectors"}
+                      text={isSaving ? "Processing..." : saveSuccess ? "Setup Complete ✓" : "Setup Protectors"}
                       as="span"
                       duration={0.6}
                     />
@@ -770,8 +767,6 @@ export default function SetupPage() {
                       : saveSuccess
                         ? "Guardians now have cryptographic power to recover your account"
                         : "This will execute 3 steps: register guardians, add keys, update thresholds"}
-                      ? "Please sign the transaction in Casper Wallet..."
-                      : "Casper Wallet will pop up for signature"}
                   </p>
                 </div>
               </div>
