@@ -1,213 +1,268 @@
-//! Recovery Registry Contract
-//!
-//! Manages guardian setup, tracking, and validation for accounts.
-//! This is a coordination contract only - actual key rotation happens
-//! via session WASM deploys signed by guardians.
-
 #![no_std]
 #![no_main]
 
-#[cfg(not(target_arch = "wasm32"))]
-compile_error!("target arch should be wasm32: compile with '--target wasm32-unknown-unknown'");
-
 extern crate alloc;
 
-use alloc::format;
-use alloc::string::String;
-use alloc::vec::Vec;
-
+use alloc::{format, vec::Vec};
 use casper_contract::{
     contract_api::{runtime, storage},
     unwrap_or_revert::UnwrapOrRevert,
 };
-use casper_types::{account::AccountHash, CLValue, Key, PublicKey, URef};
-
-use guardian_types::{
-    constants::{runtime_args as args, storage_keys, MIN_GUARDIANS},
-    errors::GuardianError,
+use casper_types::{
+    account::AccountHash, ApiError, CLValue, Key, PublicKey, URef, U256,
 };
 
-// Key generation helpers
-fn guardians_key(account_hash: &AccountHash) -> String {
-    format!("{}{}", storage_keys::GUARDIANS_PREFIX, account_hash)
+// ============================================================================
+// Error Codes
+// ============================================================================
+#[repr(u16)]
+enum Error {
+    NotAccountOwner = 1,
+    AlreadyInitialized = 2,
+    InvalidGuardianSet = 3,
+    InvalidThreshold = 4,
+    NotGuardian = 5,
+    RecoveryExists = 6,
+    RecoveryNotFound = 7,
+    AlreadyApproved = 8,
+    ThresholdNotMet = 9,
+    NotInitialized = 10,
+    InvalidAction = 11,
 }
 
-fn threshold_key(account_hash: &AccountHash) -> String {
-    format!("{}{}", storage_keys::THRESHOLD_PREFIX, account_hash)
-}
-
-fn initialized_key(account_hash: &AccountHash) -> String {
-    format!("{}{}", storage_keys::INITIALIZED_PREFIX, account_hash)
+impl From<Error> for ApiError {
+    fn from(error: Error) -> Self {
+        ApiError::User(error as u16)
+    }
 }
 
 // ============================================================================
-// ENTRY POINTS
+// Storage Helpers
 // ============================================================================
+fn uref<T: casper_types::CLTyped + casper_types::bytesrepr::ToBytes>(v: T) -> URef {
+    storage::new_uref(v)
+}
 
-/// Initialize guardians for an account.
-/// 
-/// # Arguments
-/// * `account_hash` - The account to set up guardians for
-/// * `guardians` - List of guardian public keys (minimum 2)
-/// * `threshold` - Number of guardians required for recovery approval
-///
-/// # Errors
-/// * `InvalidGuardianSetup` - Less than 2 guardians or duplicate guardians
-/// * `InvalidThreshold` - Threshold is 0 or greater than guardian count
-/// * `AlreadyInitialized` - Guardians already set up for this account
+fn read<T: casper_types::CLTyped + casper_types::bytesrepr::FromBytes>(k: &str) -> Option<T> {
+    runtime::get_key(k)
+        .and_then(|key| key.into_uref())
+        .and_then(|uref| storage::read(uref).ok().flatten())
+}
+
+fn write<T: casper_types::CLTyped + casper_types::bytesrepr::ToBytes>(k: &str, v: T) {
+    let uref = uref(v);
+    runtime::put_key(k, Key::URef(uref));
+}
+
+// ============================================================================
+// Session WASM Entry Point - Action-based dispatch
+// Actions:
+//   1 = initialize_guardians
+//   2 = initiate_recovery  
+//   3 = approve_recovery
+//   4 = is_threshold_met (returns bool)
+//   5 = finalize_recovery
+//   6 = get_guardians (returns Vec<AccountHash>)
+//   7 = get_threshold (returns u8)
+//   8 = has_guardians (returns bool)
+// ============================================================================
 #[no_mangle]
-pub extern "C" fn initialize_guardians() {
-    let account_hash: AccountHash = runtime::get_named_arg(args::ARG_ACCOUNT_HASH);
-    let guardians: Vec<PublicKey> = runtime::get_named_arg(args::ARG_GUARDIANS);
-    let threshold: u32 = runtime::get_named_arg(args::ARG_THRESHOLD);
+pub extern "C" fn call() {
+    let action: u8 = runtime::get_named_arg("action");
+    
+    match action {
+        1 => action_initialize_guardians(),
+        2 => action_initiate_recovery(),
+        3 => action_approve_recovery(),
+        4 => action_is_threshold_met(),
+        5 => action_finalize_recovery(),
+        6 => action_get_guardians(),
+        7 => action_get_threshold(),
+        8 => action_has_guardians(),
+        _ => runtime::revert(Error::InvalidAction),
+    }
+}
 
-    // Validate guardian setup
-    if guardians.len() < MIN_GUARDIANS {
-        runtime::revert(GuardianError::InvalidGuardianSetup);
+// ============================================================================
+// Action 1: Initialize guardians
+// Args: account (AccountHash), guardians (Vec<AccountHash>), threshold (u8)
+// ============================================================================
+fn action_initialize_guardians() {
+    let account: AccountHash = runtime::get_named_arg("account");
+    let guardians: Vec<AccountHash> = runtime::get_named_arg("guardians");
+    let threshold: u8 = runtime::get_named_arg("threshold");
+
+    // Caller must be the account owner
+    if runtime::get_caller() != account {
+        runtime::revert(Error::NotAccountOwner);
     }
 
-    if threshold == 0 || threshold > guardians.len() as u32 {
-        runtime::revert(GuardianError::InvalidThreshold);
+    // Minimum 2 guardians
+    if guardians.len() < 2 {
+        runtime::revert(Error::InvalidGuardianSet);
     }
 
-    // Check for duplicate guardians
-    let mut seen: Vec<&PublicKey> = Vec::new();
-    for guardian in &guardians {
-        if seen.iter().any(|&g| g == guardian) {
-            runtime::revert(GuardianError::InvalidGuardianSetup);
-        }
-        seen.push(guardian);
+    // Threshold validation
+    if threshold == 0 || threshold as usize > guardians.len() {
+        runtime::revert(Error::InvalidThreshold);
     }
 
     // Check if already initialized
-    let init_key = initialized_key(&account_hash);
-    let init_uref = get_or_create_uref(&init_key);
-    let already_initialized: bool = storage::read(init_uref)
-        .unwrap_or_default()
-        .unwrap_or(false);
-
-    if already_initialized {
-        runtime::revert(GuardianError::AlreadyInitialized);
+    let init_key = format!("grp_init_{}", account);
+    if read::<bool>(&init_key).unwrap_or(false) {
+        runtime::revert(Error::AlreadyInitialized);
     }
 
-    // Store guardians list
-    let guardians_uref = get_or_create_uref(&guardians_key(&account_hash));
-    storage::write(guardians_uref, guardians.clone());
-
-    // Store threshold
-    let threshold_uref = get_or_create_uref(&threshold_key(&account_hash));
-    storage::write(threshold_uref, threshold);
-
-    // Mark as initialized
-    storage::write(init_uref, true);
+    // Store guardians
+    write(&format!("grp_guardians_{}", account), guardians);
+    write(&format!("grp_threshold_{}", account), threshold);
+    write(&init_key, true);
 }
 
-/// Get the list of guardians for an account.
-///
-/// # Arguments
-/// * `account_hash` - The account to query
-///
-/// # Returns
-/// * `Vec<PublicKey>` - List of guardian public keys
-#[no_mangle]
-pub extern "C" fn get_guardians() {
-    let account_hash: AccountHash = runtime::get_named_arg(args::ARG_ACCOUNT_HASH);
+// ============================================================================
+// Action 2: Initiate recovery
+// Args: account (AccountHash), new_public_key (PublicKey)
+// ============================================================================
+fn action_initiate_recovery() {
+    let account: AccountHash = runtime::get_named_arg("account");
+    let new_key: PublicKey = runtime::get_named_arg("new_public_key");
 
-    let key = guardians_key(&account_hash);
-    let guardians: Vec<PublicKey> = read_from_storage(&key)
-        .unwrap_or_revert_with(GuardianError::AccountNotFound);
+    // Check account is initialized
+    let init_key = format!("grp_init_{}", account);
+    if !read::<bool>(&init_key).unwrap_or(false) {
+        runtime::revert(Error::NotInitialized);
+    }
 
+    // Check no active recovery
+    let active_key = format!("grp_active_{}", account);
+    if read::<U256>(&active_key).is_some() {
+        runtime::revert(Error::RecoveryExists);
+    }
+
+    // Generate recovery ID
+    let counter_key = "grp_counter";
+    let id: U256 = read(counter_key).unwrap_or(U256::zero()) + U256::one();
+    write(counter_key, id);
+
+    // Store recovery data
+    write(&format!("grp_rec_{}_account", id), account);
+    write(&format!("grp_rec_{}_new_key", id), new_key);
+    write(&format!("grp_rec_{}_approval_count", id), 0u8);
+    write(&format!("grp_rec_{}_approved", id), false);
+
+    // Mark as active recovery for this account
+    write(&active_key, id);
+}
+
+// ============================================================================
+// Action 3: Approve recovery
+// Args: recovery_id (U256)
+// ============================================================================
+fn action_approve_recovery() {
+    let id: U256 = runtime::get_named_arg("recovery_id");
+    let caller = runtime::get_caller();
+
+    // Get recovery account
+    let account: AccountHash = read(&format!("grp_rec_{}_account", id))
+        .unwrap_or_revert_with(Error::RecoveryNotFound);
+
+    // Check caller is a guardian
+    let guardians: Vec<AccountHash> = read(&format!("grp_guardians_{}", account))
+        .unwrap_or_revert_with(Error::NotGuardian);
+
+    if !guardians.contains(&caller) {
+        runtime::revert(Error::NotGuardian);
+    }
+
+    // Check not already approved by this guardian
+    let approver_key = format!("grp_rec_{}_approver_{}", id, caller);
+    if read::<bool>(&approver_key).unwrap_or(false) {
+        runtime::revert(Error::AlreadyApproved);
+    }
+
+    // Mark this guardian as approved
+    write(&approver_key, true);
+
+    // Increment approval count
+    let count_key = format!("grp_rec_{}_approval_count", id);
+    let current_count: u8 = read(&count_key).unwrap_or(0);
+    let new_count = current_count + 1;
+    write(&count_key, new_count);
+
+    // Check if threshold met
+    let threshold: u8 = read(&format!("grp_threshold_{}", account)).unwrap_or(2);
+    if new_count >= threshold {
+        write(&format!("grp_rec_{}_approved", id), true);
+    }
+}
+
+// ============================================================================
+// Action 4: Check if threshold is met
+// Args: recovery_id (U256)
+// Returns: bool
+// ============================================================================
+fn action_is_threshold_met() {
+    let id: U256 = runtime::get_named_arg("recovery_id");
+
+    // Check recovery exists
+    let _account: AccountHash = read(&format!("grp_rec_{}_account", id))
+        .unwrap_or_revert_with(Error::RecoveryNotFound);
+
+    let approved: bool = read(&format!("grp_rec_{}_approved", id)).unwrap_or(false);
+    runtime::ret(CLValue::from_t(approved).unwrap_or_revert());
+}
+
+// ============================================================================
+// Action 5: Finalize recovery (mark complete, clear active)
+// Args: recovery_id (U256)
+// ============================================================================
+fn action_finalize_recovery() {
+    let id: U256 = runtime::get_named_arg("recovery_id");
+
+    let account: AccountHash = read(&format!("grp_rec_{}_account", id))
+        .unwrap_or_revert_with(Error::RecoveryNotFound);
+
+    let approved: bool = read(&format!("grp_rec_{}_approved", id)).unwrap_or(false);
+    if !approved {
+        runtime::revert(Error::ThresholdNotMet);
+    }
+
+    // Clear active recovery
+    let active_key = format!("grp_active_{}", account);
+    runtime::remove_key(&active_key);
+}
+
+// ============================================================================
+// Action 6: Get guardians
+// Args: account (AccountHash)
+// Returns: Vec<AccountHash>
+// ============================================================================
+fn action_get_guardians() {
+    let account: AccountHash = runtime::get_named_arg("account");
+    let guardians: Vec<AccountHash> = read(&format!("grp_guardians_{}", account))
+        .unwrap_or_revert_with(Error::NotInitialized);
     runtime::ret(CLValue::from_t(guardians).unwrap_or_revert());
 }
 
-/// Get the recovery threshold for an account.
-///
-/// # Arguments
-/// * `account_hash` - The account to query
-///
-/// # Returns
-/// * `u32` - Number of guardians required for approval
-#[no_mangle]
-pub extern "C" fn get_threshold() {
-    let account_hash: AccountHash = runtime::get_named_arg(args::ARG_ACCOUNT_HASH);
-
-    let key = threshold_key(&account_hash);
-    let threshold: u32 = read_from_storage(&key)
-        .unwrap_or_revert_with(GuardianError::AccountNotFound);
-
+// ============================================================================
+// Action 7: Get threshold
+// Args: account (AccountHash)
+// Returns: u8
+// ============================================================================
+fn action_get_threshold() {
+    let account: AccountHash = runtime::get_named_arg("account");
+    let threshold: u8 = read(&format!("grp_threshold_{}", account))
+        .unwrap_or_revert_with(Error::NotInitialized);
     runtime::ret(CLValue::from_t(threshold).unwrap_or_revert());
 }
 
-/// Check if a public key is a guardian for a specific account.
-///
-/// # Arguments
-/// * `account_hash` - The account to check
-/// * `public_key` - The public key to verify
-///
-/// # Returns
-/// * `bool` - True if the key is a guardian for this account
-#[no_mangle]
-pub extern "C" fn is_guardian() {
-    let account_hash: AccountHash = runtime::get_named_arg(args::ARG_ACCOUNT_HASH);
-    let public_key: PublicKey = runtime::get_named_arg(args::ARG_PUBLIC_KEY);
-
-    let key = guardians_key(&account_hash);
-    let guardians: Option<Vec<PublicKey>> = read_from_storage(&key);
-
-    let is_guardian = match guardians {
-        Some(list) => list.iter().any(|g| g == &public_key),
-        None => false,
-    };
-
-    runtime::ret(CLValue::from_t(is_guardian).unwrap_or_revert());
-}
-
-/// Check if an account has guardians set up.
-///
-/// # Arguments
-/// * `account_hash` - The account to check
-///
-/// # Returns
-/// * `bool` - True if guardians are initialized
-#[no_mangle]
-pub extern "C" fn has_guardians() {
-    let account_hash: AccountHash = runtime::get_named_arg(args::ARG_ACCOUNT_HASH);
-
-    let key = initialized_key(&account_hash);
-    let has_guardians: bool = read_from_storage(&key).unwrap_or(false);
-
-    runtime::ret(CLValue::from_t(has_guardians).unwrap_or_revert());
-}
-
-/// Default call entry point (required by Casper)
-#[no_mangle]
-pub extern "C" fn call() {
-    // This entry point is called when the contract is deployed
-    // Initialize any contract-level storage here if needed
-}
-
 // ============================================================================
-// HELPER FUNCTIONS
+// Action 8: Has guardians
+// Args: account (AccountHash)
+// Returns: bool
 // ============================================================================
-
-/// Get existing URef or create a new one for the given key
-fn get_or_create_uref(key_name: &str) -> URef {
-    match runtime::get_key(key_name) {
-        Some(Key::URef(uref)) => uref,
-        _ => {
-            let new_uref = storage::new_uref(());
-            runtime::put_key(key_name, Key::URef(new_uref));
-            new_uref
-        }
-    }
-}
-
-/// Read a value from storage by key name
-fn read_from_storage<T: casper_types::CLTyped + casper_types::bytesrepr::FromBytes>(
-    key_name: &str,
-) -> Option<T> {
-    match runtime::get_key(key_name) {
-        Some(Key::URef(uref)) => storage::read(uref).ok().flatten(),
-        _ => None,
-    }
+fn action_has_guardians() {
+    let account: AccountHash = runtime::get_named_arg("account");
+    let has: bool = read::<bool>(&format!("grp_init_{}", account)).unwrap_or(false);
+    runtime::ret(CLValue::from_t(has).unwrap_or_revert());
 }
