@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react"
 import { AnimatedNoise } from "@/components/animated-noise"
 import { ScrambleTextOnHover } from "@/components/scramble-text"
 import { BitmapChevron } from "@/components/bitmap-chevron"
-import { DeployUtil } from "casper-js-sdk"
+import { DeployUtil, CLPublicKey } from "casper-js-sdk"
 import {
   connectWallet,
   disconnectWallet,
@@ -146,13 +146,13 @@ export default function RecoveryPage() {
       setSubmitError("Please fill in all fields")
       return
     }
-    
+
     // Validate addresses before submitting
     if (!isValidCasperAddress(accountAddress.trim())) {
       setSubmitError("Invalid account address format")
       return
     }
-    
+
     if (!isValidCasperAddress(newPublicKey.trim())) {
       setSubmitError("Invalid new public key format")
       return
@@ -180,18 +180,49 @@ export default function RecoveryPage() {
         throw new Error("Casper Wallet not available")
       }
 
-      const unsignedDeploy = DeployUtil.deployFromJson(initiateResult.data.deployJson).unwrap()
-      const unsignedDeployJson = DeployUtil.deployToJson(unsignedDeploy)
+      // Ensure deployJson is a string for the wallet
+      const deployJson = initiateResult.data.deployJson
+      const deployString = typeof deployJson === 'string' ? deployJson : JSON.stringify(deployJson)
 
-      const signedJson = await provider.signDeploy(unsignedDeployJson, guardianKey)
-      const signedDeploy = DeployUtil.deployFromJson(signedJson).unwrap()
+      // Sign the deploy using Casper Wallet
+      const response = await provider.sign(deployString, guardianKey)
+      console.log("Recovery sign response:", response)
 
-      if (!signedDeploy) {
-        throw new Error("Failed to sign deploy")
+      if (response.cancelled) {
+        throw new Error("Sign request cancelled by user")
       }
 
-      // Step 3: Submit signed deploy
-      const submitResult = await submitDeploy(JSON.stringify(DeployUtil.deployToJson(signedDeploy)))
+      const signatureHex = response.signatureHex
+      if (!signatureHex) {
+        throw new Error("Failed to get signature from wallet")
+      }
+
+      // Reconstruct the deploy from the JSON
+      const originalDeployJson = typeof deployJson === 'string' ? JSON.parse(deployJson) : deployJson
+      const deploy = DeployUtil.deployFromJson(originalDeployJson).unwrap()
+
+      // Get the public key to determine the signature algorithm
+      const publicKey = CLPublicKey.fromHex(guardianKey)
+
+      // Casper Wallet returns the signature without the algorithm tag
+      // We need to prepend the tag: 01 for Ed25519, 02 for Secp256k1
+      const algorithmTag = publicKey.isEd25519() ? '01' : '02'
+      const fullSignature = algorithmTag + signatureHex
+
+      // Create a proper approval with hex strings
+      const approval = new DeployUtil.Approval()
+      approval.signer = publicKey.toHex()
+      approval.signature = fullSignature
+
+      // Add the approval to the deploy
+      deploy.approvals.push(approval)
+
+      // Step 3: Submit signed deploy to the network
+      const signedDeployJson = DeployUtil.deployToJson(deploy)
+      console.log("Recovery deploy approvals count:", deploy.approvals.length)
+
+      const submitResult = await submitDeploy(JSON.stringify(signedDeployJson))
+      console.log("Recovery submit result:", submitResult)
 
       if (!submitResult.success) {
         throw new Error(submitResult.error || "Failed to submit deploy")
@@ -352,9 +383,8 @@ export default function RecoveryPage() {
                         }
                       }}
                       placeholder="Enter your account address..."
-                      className={`w-full bg-transparent border px-4 py-3 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-accent focus:outline-none transition-colors ${
-                        accountAddressError ? "border-red-500/50" : "border-border/30"
-                      }`}
+                      className={`w-full bg-transparent border px-4 py-3 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-accent focus:outline-none transition-colors ${accountAddressError ? "border-red-500/50" : "border-border/30"
+                        }`}
                     />
                     {accountAddressError && (
                       <p className="font-mono text-xs text-red-500">
@@ -383,9 +413,8 @@ export default function RecoveryPage() {
                         }
                       }}
                       placeholder="Enter your new public key..."
-                      className={`w-full bg-transparent border px-4 py-3 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-accent focus:outline-none transition-colors ${
-                        newPublicKeyError ? "border-red-500/50" : "border-border/30"
-                      }`}
+                      className={`w-full bg-transparent border px-4 py-3 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-accent focus:outline-none transition-colors ${newPublicKeyError ? "border-red-500/50" : "border-border/30"
+                        }`}
                     />
                     {newPublicKeyError && (
                       <p className="font-mono text-xs text-red-500">

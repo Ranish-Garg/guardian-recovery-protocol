@@ -108,7 +108,7 @@ export default function SetupPage() {
     const newGuardians = [...guardians]
     newGuardians[index] = value
     setGuardians(newGuardians)
-    
+
     // Validate on change
     const newErrors = [...guardianErrors]
     if (value.trim()) {
@@ -182,7 +182,7 @@ export default function SetupPage() {
       setSaveError(`At least ${minGuardians} protectors are required`)
       return
     }
-    
+
     // Check all guardians are valid addresses
     const invalidGuardians = validGuardians.filter(g => !isValidCasperAddress(g))
     if (invalidGuardians.length > 0) {
@@ -407,9 +407,8 @@ export default function SetupPage() {
                         value={guardian}
                         onChange={(e) => handleGuardianChange(index, e.target.value)}
                         placeholder="Enter protector public key..."
-                        className={`w-full bg-transparent border px-4 py-3 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-accent focus:outline-none transition-colors ${
-                          guardianErrors[index] ? "border-red-500/50" : "border-border/30"
-                        }`}
+                        className={`w-full bg-transparent border px-4 py-3 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-accent focus:outline-none transition-colors ${guardianErrors[index] ? "border-red-500/50" : "border-border/30"
+                          }`}
                       />
                       {guardianErrors[index] && (
                         <p className="font-mono text-xs text-red-500 mt-1">
