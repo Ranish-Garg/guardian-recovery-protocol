@@ -156,17 +156,13 @@ export const finalizeRecovery = async (
 };
 
 /**
- * Check if account has protectors
+ * Check if account has protectors (NO TRANSACTION - direct state query)
  */
-export const hasGuardians = async (
-    signerPublicKey: string,
-    targetAccount: string
-): Promise<ApiResponse<DeployResponse>> => {
+export const checkHasGuardians = async (
+    publicKey: string
+): Promise<ApiResponse<{ hasGuardians: boolean }>> => {
     try {
-        const response = await apiClient.post('/recovery/has-guardians', {
-            signerPublicKey,
-            targetAccount,
-        });
+        const response = await apiClient.get(`/account/${publicKey}/has-guardians`);
         return response.data;
     } catch (error) {
         return handleApiError(error);
@@ -174,14 +170,29 @@ export const hasGuardians = async (
 };
 
 /**
- * Get guardians for an account
+ * Get guardians for an account (NO TRANSACTION - direct state query)
  */
-export const getGuardians = async (
+export const queryGuardians = async (
+    publicKey: string
+): Promise<ApiResponse<{ guardians: string[]; threshold: number; count: number }>> => {
+    try {
+        const response = await apiClient.get(`/account/${publicKey}/guardians`);
+        return response.data;
+    } catch (error) {
+        return handleApiError(error);
+    }
+};
+
+/**
+ * @deprecated Use checkHasGuardians instead - this version requires a transaction
+ * Check if account has protectors (OLD - requires transaction)
+ */
+export const hasGuardians = async (
     signerPublicKey: string,
     targetAccount: string
 ): Promise<ApiResponse<DeployResponse>> => {
     try {
-        const response = await apiClient.post('/recovery/get-guardians', {
+        const response = await apiClient.post('/recovery/has-guardians', {
             signerPublicKey,
             targetAccount,
         });

@@ -15,7 +15,7 @@ import {
   getProvider
 } from "@/lib/casper-wallet"
 
-import { registerGuardians, submitDeploy, getDeployStatus, getGuardians, hasGuardians, buildAddKeyDeploy, buildUpdateThresholdsDeploy } from "@/lib/api"
+import { registerGuardians, submitDeploy, getDeployStatus, checkHasGuardians, queryGuardians, buildAddKeyDeploy, buildUpdateThresholdsDeploy } from "@/lib/api"
 
 import { isValidCasperAddress, getAddressValidationError } from "@/lib/validation"
 import gsap from "gsap"
@@ -62,93 +62,46 @@ export default function SetupPage() {
     }
   }, [account])
 
-  // Fetch existing guardians when connected
+  // Fetch existing guardians when connected (NO TRANSACTION - direct state query)
   useEffect(() => {
     const fetchExistingGuardians = async () => {
       if (!account) return
 
       // Check if we already have guardians in localStorage
       const storageKey = `guardians_${account}`
-      if (localStorage.getItem(storageKey)) {
+      const storedGuardians = localStorage.getItem(storageKey)
+      if (storedGuardians) {
         return // Already loaded from localStorage
       }
 
       setIsLoadingGuardians(true)
       try {
-        // Use hasGuardians to check if guardians are registered
-        // We can't actually fetch the guardian list via deploy result
-        // So we'll just check if they exist
-        const result = await hasGuardians(account, account)
-        if (result.success && result.data?.deployJson) {
-          const provider = await getProvider()
-          if (!provider) {
-            setIsLoadingGuardians(false)
-            return
-          }
+        // Step 1: Check if guardians exist (simple GET request - no transaction)
+        const hasResult = await checkHasGuardians(account)
 
-          // Parse and sign the deploy
-          const deployJson = result.data.deployJson
-          const deployString = typeof deployJson === 'string' ? deployJson : JSON.stringify(deployJson)
+        if (hasResult.success && hasResult.data?.hasGuardians) {
+          // Step 2: Fetch the guardians list (simple GET request - no transaction)
+          const guardiansResult = await queryGuardians(account)
 
-          const response = await provider.sign(deployString, account)
-          if (response.cancelled) {
-            setIsLoadingGuardians(false)
-            return
-          }
+          if (guardiansResult.success && guardiansResult.data?.guardians) {
+            const fetchedGuardians = guardiansResult.data.guardians
+            const threshold = guardiansResult.data.threshold || fetchedGuardians.length
 
-          const signatureHex = response.signatureHex
-          if (!signatureHex) {
-            setIsLoadingGuardians(false)
-            return
-          }
-
-          // Reconstruct and sign the deploy
-          const originalDeployJson = typeof deployJson === 'string' ? JSON.parse(deployJson) : deployJson
-          const deploy = DeployUtil.deployFromJson(originalDeployJson).unwrap()
-
-          const publicKey = CLPublicKey.fromHex(account)
-          const tag = publicKey.tag
-          const tagHex = tag.toString(16).padStart(2, '0')
-          const signatureWithTag = tagHex + signatureHex
-
-          const approval = new DeployUtil.Approval()
-          approval.signer = account
-          approval.signature = signatureWithTag
-          deploy.approvals.push(approval)
-
-          // Submit the signed deploy
-          const signedDeployJson = DeployUtil.deployToJson(deploy)
-          const submitResult = await submitDeploy(JSON.stringify(signedDeployJson))
-
-          if (submitResult.success && submitResult.data?.deployHash) {
-            // Poll for result - if successful, guardians exist
-            const pollForResult = async (hash: string) => {
-              for (let i = 0; i < 15; i++) {
-                await new Promise(resolve => setTimeout(resolve, 3000))
-                const statusResult = await getDeployStatus(hash)
-
-                if (statusResult.success && statusResult.data) {
-                  const deployData = statusResult.data
-                  // Check execution_results
-                  if (deployData.status === "success") {
-                    // Guardians exist - show a message that they're registered
-                    // Since we can't fetch the actual guardian addresses from session WASM,
-                    // we'll just indicate that guardians are already configured
-                    setSaveSuccess(true)
-                    // Set a placeholder to indicate guardians exist but we can't fetch them
-                    setRegisteredGuardians(["Protectors already configured for this account"])
-                    break
-                  } else if (deployData.status === "failed") {
-                    // No guardians or error
-                    break
-                  }
-                }
-              }
-            }
-
-            await pollForResult(submitResult.data.deployHash)
+            // Note: The blockchain stores account hashes, not public keys
+            // We can't convert back to public keys, so show a helpful message
+            // The user should have the original public keys in localStorage from when they set up
+            setRegisteredGuardians([
+              `${fetchedGuardians.length} protector(s) configured (threshold: ${threshold})`,
+              "Original public keys not available - they were saved when you set up guardians"
+            ])
+            setSaveSuccess(true)
+          } else {
+            // Guardians exist but couldn't fetch the list - show placeholder
+            setRegisteredGuardians(["Protectors already configured for this account"])
+            setSaveSuccess(true)
           }
         }
+        // If hasGuardians is false, user hasn't set up guardians yet - nothing to do
       } catch (error) {
         console.error("Error checking guardians:", error)
         // Silently fail - user might not have guardians registered yet

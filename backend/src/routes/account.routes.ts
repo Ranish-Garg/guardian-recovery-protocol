@@ -70,4 +70,53 @@ router.get('/deploy/:deployHash', async (req: Request, res: Response) => {
     }
 });
 
+/**
+ * GET /account/:publicKey/has-guardians
+ * Check if account has guardians registered (NO TRANSACTION - direct state query)
+ */
+router.get('/:publicKey/has-guardians', async (req: Request, res: Response) => {
+    try {
+        const { publicKey } = req.params;
+
+        const hasGuardians = await casperService.hasGuardians(publicKey);
+
+        res.json({
+            success: true,
+            data: { hasGuardians },
+        } as ApiResponse);
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: `Failed to check guardians: ${error}`,
+        } as ApiResponse);
+    }
+});
+
+/**
+ * GET /account/:publicKey/guardians
+ * Get account's registered guardians (NO TRANSACTION - direct state query)
+ */
+router.get('/:publicKey/guardians', async (req: Request, res: Response) => {
+    try {
+        const { publicKey } = req.params;
+
+        const guardians = await casperService.getGuardians(publicKey);
+        const threshold = await casperService.getThreshold(publicKey);
+
+        res.json({
+            success: true,
+            data: {
+                guardians,
+                threshold,
+                count: guardians.length
+            },
+        } as ApiResponse);
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: `Failed to get guardians: ${error}`,
+        } as ApiResponse);
+    }
+});
+
 export default router;
