@@ -81,6 +81,102 @@ export class CasperService {
     }
 
     /**
+     * Query an account's named key value
+     */
+    async queryAccountNamedKey(publicKeyHex: string, keyName: string): Promise<any> {
+        try {
+            const publicKey = CLPublicKey.fromHex(publicKeyHex);
+            const accountHash = publicKey.toAccountHashStr();
+            const stateRootHash = await this.client.nodeClient.getStateRootHash();
+
+            // Query the account state with the named key path
+            const result = await this.client.nodeClient.getBlockState(
+                stateRootHash,
+                accountHash,
+                [keyName]
+            );
+            return result;
+        } catch (error) {
+            console.error(`Error querying account named key ${keyName}: ${error}`);
+            return null;
+        }
+    }
+
+    /**
+     * Check if account has guardians registered (reads from named keys)
+     */
+    async hasGuardians(publicKeyHex: string): Promise<boolean> {
+        try {
+            const publicKey = CLPublicKey.fromHex(publicKeyHex);
+            const accountHashBytes = publicKey.toAccountHash();
+            const accountHashHex = Buffer.from(accountHashBytes).toString('hex');
+
+            // The contract stores: grp_init_{account_hash_hex} (no prefix)
+            const keyName = `grp_init_${accountHashHex}`;
+            const result = await this.queryAccountNamedKey(publicKeyHex, keyName);
+
+            if (result && result.CLValue) {
+                return result.CLValue.data === true;
+            }
+            return false;
+        } catch (error) {
+            console.error(`Error checking has guardians: ${error}`);
+            return false;
+        }
+    }
+
+    /**
+     * Get guardians for an account (reads from named keys)
+     */
+    async getGuardians(publicKeyHex: string): Promise<string[]> {
+        try {
+            const publicKey = CLPublicKey.fromHex(publicKeyHex);
+            const accountHashBytes = publicKey.toAccountHash();
+            const accountHashHex = Buffer.from(accountHashBytes).toString('hex');
+
+            // The contract stores: grp_guardians_{account_hash_hex} (no prefix)
+            const keyName = `grp_guardians_${accountHashHex}`;
+            const result = await this.queryAccountNamedKey(publicKeyHex, keyName);
+
+            if (result && result.CLValue && Array.isArray(result.CLValue.data)) {
+                // Convert account hashes back to hex strings
+                return result.CLValue.data.map((hash: any) => {
+                    if (typeof hash === 'string') return hash;
+                    if (hash.data) return `account-hash-${Buffer.from(hash.data).toString('hex')}`;
+                    return String(hash);
+                });
+            }
+            return [];
+        } catch (error) {
+            console.error(`Error getting guardians: ${error}`);
+            return [];
+        }
+    }
+
+    /**
+     * Get threshold for an account (reads from named keys)
+     */
+    async getThreshold(publicKeyHex: string): Promise<number> {
+        try {
+            const publicKey = CLPublicKey.fromHex(publicKeyHex);
+            const accountHashBytes = publicKey.toAccountHash();
+            const accountHashHex = Buffer.from(accountHashBytes).toString('hex');
+
+            // The contract stores: grp_threshold_{account_hash_hex} (no prefix)
+            const keyName = `grp_threshold_${accountHashHex}`;
+            const result = await this.queryAccountNamedKey(publicKeyHex, keyName);
+
+            if (result && result.CLValue) {
+                return Number(result.CLValue.data) || 0;
+            }
+            return 0;
+        } catch (error) {
+            console.error(`Error getting threshold: ${error}`);
+            return 0;
+        }
+    }
+
+    /**
      * Submit deploy to the network
      */
     async submitDeploy(signedDeploy: DeployUtil.Deploy): Promise<string> {
