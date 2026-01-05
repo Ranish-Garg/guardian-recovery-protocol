@@ -4,6 +4,8 @@ import {
     RuntimeArgs,
     CLAccountHash,
     DeployUtil,
+    Contracts,
+    CasperClient,
 } from 'casper-js-sdk';
 import { config } from '../config';
 import { deployService } from './deploy.service';
@@ -38,7 +40,7 @@ export class ContractService {
     }
 
     // ============================================================================
-    // ACTION 1: Initialize Guardians
+    // Initialize Guardians
     // ============================================================================
 
     /**
@@ -51,9 +53,8 @@ export class ContractService {
         threshold: number
     ): Promise<DeployResult> {
         const userPublicKey = CLPublicKey.fromHex(userPublicKeyHex);
-        const userAccountHash = userPublicKey.toAccountHash();
+        const userAccountHash = new CLAccountHash(userPublicKey.toAccountHash());
 
-        // Build guardian account hashes
         const guardianAccountHashes = guardians.map((g) => {
             const pk = CLPublicKey.fromHex(g);
             return new CLAccountHash(pk.toAccountHash());
@@ -82,7 +83,7 @@ export class ContractService {
     }
 
     // ============================================================================
-    // ACTION 2: Initiate Recovery
+    // Initiate Recovery
     // ============================================================================
 
     /**
@@ -96,6 +97,13 @@ export class ContractService {
         const initiatorKey = CLPublicKey.fromHex(initiatorPublicKeyHex);
         const targetAccount = CLPublicKey.fromHex(targetAccountHex);
         const newPublicKey = CLPublicKey.fromHex(newPublicKeyHex);
+
+        const targetAccountHash = new CLAccountHash(targetAccount.toAccountHash());
+
+        console.log('Initiate Recovery Debug:');
+        console.log('  Target Public Key:', targetAccountHex);
+        console.log('  Target Account Hash:', Buffer.from(targetAccount.toAccountHash()).toString('hex'));
+        console.log('  Contract Hash:', this.contractHash);
 
         const args = RuntimeArgs.fromMap({
             account: CLValueBuilder.byteArray(targetAccount.toAccountHash()),
@@ -116,7 +124,7 @@ export class ContractService {
     }
 
     // ============================================================================
-    // ACTION 3: Approve Recovery
+    // Approve Recovery
     // ============================================================================
 
     /**
@@ -146,7 +154,7 @@ export class ContractService {
     }
 
     // ============================================================================
-    // ACTION 4: Check Threshold Met
+    // Check Threshold Met
     // ============================================================================
 
     /**
@@ -177,7 +185,7 @@ export class ContractService {
     }
 
     // ============================================================================
-    // ACTION 5: Finalize Recovery
+    // Finalize Recovery
     // ============================================================================
 
     /**
@@ -219,9 +227,10 @@ export class ContractService {
     ): Promise<DeployResult> {
         const signerKey = CLPublicKey.fromHex(signerPublicKeyHex);
         const targetAccount = CLPublicKey.fromHex(targetAccountHex);
+        const targetAccountHash = new CLAccountHash(targetAccount.toAccountHash());
 
         const args = RuntimeArgs.fromMap({
-            account: CLValueBuilder.byteArray(targetAccount.toAccountHash()),
+            account: targetAccountHash,
         });
 
         const deploy = this.buildContractDeploy(
@@ -247,9 +256,10 @@ export class ContractService {
     ): Promise<DeployResult> {
         const signerKey = CLPublicKey.fromHex(signerPublicKeyHex);
         const targetAccount = CLPublicKey.fromHex(targetAccountHex);
+        const targetAccountHash = new CLAccountHash(targetAccount.toAccountHash());
 
         const args = RuntimeArgs.fromMap({
-            account: CLValueBuilder.byteArray(targetAccount.toAccountHash()),
+            account: targetAccountHash,
         });
 
         const deploy = this.buildContractDeploy(
