@@ -213,7 +213,10 @@ export class ContractService {
         const deploy = this.buildContractDeploy(
             signerKey,
             'finalize',
+<<<<<<< HEAD
             'finalize',
+=======
+>>>>>>> refs/remotes/origin/contracts
             args
         );
 
