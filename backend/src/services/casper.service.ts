@@ -23,6 +23,51 @@ export class CasperService {
     }
 
     /**
+     * Get the chain name from the node
+     */
+    async getChainName(): Promise<string> {
+        try {
+            const status = await this.client.nodeClient.getStatus();
+            return status.chainspec_name;
+        } catch (error) {
+            console.error('Error getting chain name:', error);
+            return config.casper.chainName; // Fallback
+        }
+    }
+
+    /**
+     * Check if account exists and has balance
+     */
+    async checkAccountBalance(publicKeyHex: string): Promise<{ exists: boolean; balance: string }> {
+        try {
+            // Get account info to find the main purse
+            const accountInfo = await this.getAccountInfo(publicKeyHex);
+
+            if (!accountInfo || !accountInfo.Account) {
+                return { exists: false, balance: '0' };
+            }
+
+            const mainPurse = accountInfo.Account.main_purse;
+            const stateRootHash = await this.client.nodeClient.getStateRootHash();
+
+            const balance = await this.client.nodeClient.getAccountBalance(
+                stateRootHash,
+                mainPurse
+            );
+
+            return { exists: true, balance: balance.toString() };
+        } catch (error: any) {
+            console.error('Error checking account balance:', error);
+            // If error contains "ValueNotFound", account doesn't exist
+            if (error.toString().includes('ValueNotFound') || error.code === -32003) {
+                return { exists: false, balance: '0' };
+            }
+            // For other errors, assume it might exist but failed to read
+            return { exists: true, balance: '0' };
+        }
+    }
+
+    /**
      * Get account info from the network
      */
     async getAccountInfo(publicKeyHex: string): Promise<any> {
@@ -188,11 +233,109 @@ export class CasperService {
     }
 
     /**
-     * Submit deploy to the network
+     * Submit deploy to the network (using SDK)
      */
     async submitDeploy(signedDeploy: DeployUtil.Deploy): Promise<string> {
         const deployHash = await this.client.putDeploy(signedDeploy);
         return deployHash;
+    }
+
+    /**
+     * Submit deploy JSON directly to node via RPC (bypasses SDK validation)
+     * This is useful when the SDK's deployFromJson validation is too strict
+     */
+    async submitDeployJson(deployJson: any): Promise<{
+        deployHash: string;
+        success: boolean;
+        message: string;
+    }> {
+        try {
+            console.log('Submitting deploy to RPC:', config.casper.nodeUrl);
+            console.log('Deploy JSON structure keys:', Object.keys(deployJson));
+
+            // The deployJson should be {deploy: {...}} format
+            // Casper RPC expects params: {deploy: {...}}
+            // Make sure we're not double-wrapping
+            let params = deployJson;
+            if (deployJson.deploy && !deployJson.deploy.deploy) {
+                // Already in correct format: {deploy: {...}}
+                params = deployJson;
+            } else if (!deployJson.deploy) {
+                // Wrap if needed: deploy -> {deploy: deploy}
+                params = { deploy: deployJson };
+            }
+
+            console.log('RPC params keys:', Object.keys(params));
+            console.log('Deploy hash from body:', params.deploy?.hash);
+
+            // Make direct RPC call to the node
+            const response = await fetch(config.casper.nodeUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: Date.now(),
+                    method: 'account_put_deploy',
+                    params: params
+                }),
+            });
+
+            console.log('RPC response status:', response.status, response.statusText);
+
+            // Check if response is OK
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('RPC HTTP error:', errorText);
+                return {
+                    deployHash: '',
+                    success: false,
+                    message: `HTTP error ${response.status}: ${response.statusText}. ${errorText}`,
+                };
+            }
+
+            // Get response text first to handle empty responses
+            const responseText = await response.text();
+            console.log('RPC response text length:', responseText.length);
+
+            if (!responseText || responseText.trim() === '') {
+                return {
+                    deployHash: '',
+                    success: false,
+                    message: 'RPC returned empty response',
+                };
+            }
+
+            // Parse the JSON response
+            const result = JSON.parse(responseText) as {
+                error?: { message?: string; code?: number; data?: any };
+                result?: { deploy_hash?: string };
+            };
+            console.log('RPC response:', JSON.stringify(result, null, 2));
+
+            if (result.error) {
+                return {
+                    deployHash: '',
+                    success: false,
+                    message: `RPC error: ${result.error.message || JSON.stringify(result.error)}`,
+                };
+            }
+
+            const deployHash = result.result?.deploy_hash || '';
+            return {
+                deployHash,
+                success: true,
+                message: 'Deploy submitted successfully via RPC',
+            };
+        } catch (error) {
+            console.error('Error submitting deploy via RPC:', error);
+            return {
+                deployHash: '',
+                success: false,
+                message: `Error submitting deploy: ${error}`,
+            };
+        }
     }
 
     /**

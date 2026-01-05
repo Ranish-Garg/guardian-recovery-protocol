@@ -11,101 +11,25 @@ import { config } from '../config';
 import { deployService } from './deploy.service';
 import { DeployResult } from '../types';
 
-/**
- * ContractService - Builds deploys for the recovery_registry stored contract
- * 
- * The contract must be deployed first, then its hash is used for all calls.
- * Set CONTRACT_HASH in .env after deploying.
- */
 export class ContractService {
-    private contractClient: Contracts.Contract;
-    private contractHash: string | null;
-    private wasmPath: string;
+    private contractHash: string;
 
     constructor() {
-        this.wasmPath = config.wasm.recoveryRegistry;
-        this.contractHash = process.env.RECOVERY_CONTRACT_HASH || null;
-
-        const casperClient = new CasperClient(config.casper.nodeUrl);
-        this.contractClient = new Contracts.Contract(casperClient);
-
-        if (this.contractHash) {
-            this.contractClient.setContractHash(`hash-${this.contractHash}`);
-            console.log(`Contract service initialized with hash: ${this.contractHash}`);
-        } else {
-            console.log('Contract hash not set. Deploy the contract first.');
+        if (!config.contract.recoveryRegistryHash) {
+            throw new Error('RECOVERY_REGISTRY_HASH is not defined in environment variables');
         }
+        this.contractHash = config.contract.recoveryRegistryHash;
     }
 
     /**
-     * Check if contract is deployed
+     * Helper: Build a contract call deploy
      */
-    isContractDeployed(): boolean {
-        return this.contractHash !== null;
-    }
-
-    /**
-     * Set contract hash after deployment
-     */
-    setContractHash(hash: string) {
-        this.contractHash = hash;
-        this.contractClient.setContractHash(`hash-${hash}`);
-        console.log(`Contract hash set to: ${hash}`);
-    }
-
-    /**
-     * Build deploy to install the contract (one-time)
-     */
-    async buildInstallDeploy(installerPublicKeyHex: string): Promise<DeployResult> {
-        const installerKey = CLPublicKey.fromHex(installerPublicKeyHex);
-
-        const deploy = deployService.buildSessionWasmDeploy(
-            installerKey,
-            this.wasmPath,
-            RuntimeArgs.fromMap({}),
-            '400000000000' // 400 CSPR for contract installation
-        );
-
-        return {
-            deployHash: '',
-            success: true,
-            message: deployService.deployToJson(deploy),
-        };
-    }
-
-    /**
-     * Build deploy to install the minimal test contract
-     */
-    async buildTestContractDeploy(installerPublicKeyHex: string): Promise<DeployResult> {
-        const installerKey = CLPublicKey.fromHex(installerPublicKeyHex);
-
-        const deploy = deployService.buildSessionWasmDeploy(
-            installerKey,
-            config.wasm.testContract,
-            RuntimeArgs.fromMap({}),
-            '100000000000' // 100 CSPR for minimal test contract
-        );
-
-        return {
-            deployHash: '',
-            success: true,
-            message: deployService.deployToJson(deploy),
-        };
-    }
-
-    /**
-     * Build contract call deploy helper
-     */
-    private buildContractCallDeploy(
+    private buildContractDeploy(
         callerPublicKey: CLPublicKey,
         entryPoint: string,
         args: RuntimeArgs,
         paymentAmount: string = config.deploy.paymentAmount
     ): DeployUtil.Deploy {
-        if (!this.contractHash) {
-            throw new Error('Contract not deployed. Set RECOVERY_CONTRACT_HASH in .env');
-        }
-
         return deployService.buildContractCallDeploy(
             callerPublicKey,
             this.contractHash,
@@ -118,6 +42,11 @@ export class ContractService {
     // ============================================================================
     // Initialize Guardians
     // ============================================================================
+
+    /**
+     * Register account with guardians and threshold
+     * Entry Point: init_guardians
+     */
     async initializeGuardians(
         userPublicKeyHex: string,
         guardians: string[],
@@ -132,14 +61,17 @@ export class ContractService {
         });
 
         const args = RuntimeArgs.fromMap({
-            account: userAccountHash,
+            action: CLValueBuilder.u8(1), // Action 1: Initialize Guardians
+            account: CLValueBuilder.byteArray(userAccountHash),
             guardians: CLValueBuilder.list(guardianAccountHashes),
             threshold: CLValueBuilder.u8(threshold),
         });
 
-        const deploy = this.buildContractCallDeploy(
+        // Use session WASM deploy instead of stored contract call
+        // The recovery_registry.wasm is designed to be run as session code
+        const deploy = deployService.buildSessionWasmDeploy(
             userPublicKey,
-            'init_guardians',
+            config.wasm.recoveryRegistry,
             args
         );
 
@@ -153,6 +85,10 @@ export class ContractService {
     // ============================================================================
     // Initiate Recovery
     // ============================================================================
+
+    /**
+     * Entry Point: start_recovery
+     */
     async initiateRecovery(
         initiatorPublicKeyHex: string,
         targetAccountHex: string,
@@ -170,11 +106,11 @@ export class ContractService {
         console.log('  Contract Hash:', this.contractHash);
 
         const args = RuntimeArgs.fromMap({
-            account: targetAccountHash,
-            new_public_key: newPublicKey,
+            account: CLValueBuilder.byteArray(targetAccount.toAccountHash()),
+            new_key: newPublicKey,
         });
 
-        const deploy = this.buildContractCallDeploy(
+        const deploy = this.buildContractDeploy(
             initiatorKey,
             'start_recovery',
             args
@@ -190,6 +126,10 @@ export class ContractService {
     // ============================================================================
     // Approve Recovery
     // ============================================================================
+
+    /**
+     * Entry Point: approve
+     */
     async approveRecovery(
         guardianPublicKeyHex: string,
         recoveryId: string
@@ -200,7 +140,7 @@ export class ContractService {
             id: CLValueBuilder.u256(recoveryId),
         });
 
-        const deploy = this.buildContractCallDeploy(
+        const deploy = this.buildContractDeploy(
             guardianKey,
             'approve',
             args
@@ -216,6 +156,10 @@ export class ContractService {
     // ============================================================================
     // Check Threshold Met
     // ============================================================================
+
+    /**
+     * Entry Point: is_approved
+     */
     async buildCheckThresholdDeploy(
         signerPublicKeyHex: string,
         recoveryId: string
@@ -226,10 +170,11 @@ export class ContractService {
             id: CLValueBuilder.u256(recoveryId),
         });
 
-        const deploy = this.buildContractCallDeploy(
+        const deploy = this.buildContractDeploy(
             signerKey,
             'is_approved',
-            args
+            args,
+            config.deploy.paymentAmount
         );
 
         return {
@@ -242,6 +187,10 @@ export class ContractService {
     // ============================================================================
     // Finalize Recovery
     // ============================================================================
+
+    /**
+     * Entry Point: finalize
+     */
     async finalizeRecovery(
         signerPublicKeyHex: string,
         recoveryId: string
@@ -252,7 +201,7 @@ export class ContractService {
             id: CLValueBuilder.u256(recoveryId),
         });
 
-        const deploy = this.buildContractCallDeploy(
+        const deploy = this.buildContractDeploy(
             signerKey,
             'finalize',
             args
@@ -266,8 +215,12 @@ export class ContractService {
     }
 
     // ============================================================================
-    // Has Guardians
+    // ACTION 8: Has Guardians
     // ============================================================================
+
+    /**
+     * Entry Point: has_guardians
+     */
     async buildHasGuardiansDeploy(
         signerPublicKeyHex: string,
         targetAccountHex: string
@@ -280,10 +233,11 @@ export class ContractService {
             account: targetAccountHash,
         });
 
-        const deploy = this.buildContractCallDeploy(
+        const deploy = this.buildContractDeploy(
             signerKey,
             'has_guardians',
-            args
+            args,
+            config.deploy.paymentAmount
         );
 
         return {
@@ -293,9 +247,9 @@ export class ContractService {
         };
     }
 
-    // ============================================================================
-    // Get Guardians
-    // ============================================================================
+    /**
+     * Entry Point: get_guardians
+     */
     async buildGetGuardiansDeploy(
         signerPublicKeyHex: string,
         targetAccountHex: string
@@ -308,10 +262,11 @@ export class ContractService {
             account: targetAccountHash,
         });
 
-        const deploy = this.buildContractCallDeploy(
+        const deploy = this.buildContractDeploy(
             signerKey,
             'get_guardians',
-            args
+            args,
+            config.deploy.paymentAmount
         );
 
         return {
@@ -322,5 +277,4 @@ export class ContractService {
     }
 }
 
-// Export singleton instance
 export const contractService = new ContractService();

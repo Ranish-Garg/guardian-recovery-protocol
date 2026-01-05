@@ -96,11 +96,28 @@ export class SessionService {
     /**
      * Submit multi-signed deploy
      * Called once all required signatures are collected
+     * Uses direct RPC submission to bypass SDK validation issues
      */
     async submitSignedDeploy(deployJson: string): Promise<DeployResult> {
         try {
-            const deploy = deployService.jsonToDeploy(deployJson);
-            const result = await deployService.submit(deploy);
+            // Parse the JSON to extract the deploy object
+            const parsed = JSON.parse(deployJson);
+            console.log('Submitting deploy via direct RPC, keys:', Object.keys(parsed));
+
+            // Debug: Log approval info
+            if (parsed.deploy?.approvals) {
+                console.log('Approvals count:', parsed.deploy.approvals.length);
+                parsed.deploy.approvals.forEach((approval: any, idx: number) => {
+                    console.log(`Approval ${idx}:`, {
+                        signer: approval.signer?.substring(0, 20) + '...',
+                        signatureLength: approval.signature?.length,
+                        signaturePrefix: approval.signature?.substring(0, 4)
+                    });
+                });
+            }
+
+            // Submit directly via RPC, bypassing SDK validation
+            const result = await casperService.submitDeployJson(parsed);
             return result;
         } catch (error) {
             return {

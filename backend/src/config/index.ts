@@ -14,6 +14,11 @@ export const config = {
         chainName: process.env.CASPER_CHAIN_NAME || 'casper-test',
     },
 
+    // Contract Hashes
+    contract: {
+        recoveryRegistryHash: process.env.RECOVERY_REGISTRY_HASH
+    },
+
     // WASM Paths
     wasm: {
         recoveryRegistry: path.resolve(
