@@ -32,7 +32,7 @@ export default function RecoveryPage() {
   const [guardianKey, setGuardianKey] = useState("")
   const [isConnecting, setIsConnecting] = useState(false)
   const [connectionError, setConnectionError] = useState<string | null>(null)
-  const [recoveryStatus, setRecoveryStatus] = useState<"idle" | "pending" | "submitted" | "confirmed">("idle")
+  const [recoveryStatus, setRecoveryStatus] = useState<"idle" | "pending" | "submitted" | "confirmed" | "failed">("idle")
 
   // Recovery state
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -63,26 +63,39 @@ export default function RecoveryPage() {
     }
   }, [])
 
-  // Poll for deploy status
+  // Poll for deploy status - stops when status is final (confirmed or failed)
   useEffect(() => {
-    if (!deployHash || recoveryStatus === "confirmed") return
+    // Only poll if we have a deploy hash and status is "submitted" (waiting for confirmation)
+    if (!deployHash || recoveryStatus !== "submitted") return
 
     const pollStatus = async () => {
       try {
+        console.log("Polling deploy status for:", deployHash)
         const result = await getDeployStatus(deployHash)
+        console.log("Poll result:", result)
+
         if (result.success && result.data) {
           if (result.data.status === "success") {
+            console.log("Deploy succeeded!")
             setRecoveryStatus("confirmed")
+            // Polling will stop because status is no longer "submitted"
           } else if (result.data.status === "failed") {
-            setSubmitError("Recovery deploy failed on-chain")
-            setRecoveryStatus("idle")
+            console.log("Deploy failed:", result.data.errorMessage)
+            setSubmitError(result.data.errorMessage || "Recovery deploy failed on-chain")
+            setRecoveryStatus("failed")
+            // Polling will stop because status is no longer "submitted"
           }
+          // If status is "pending", continue polling
         }
       } catch (error) {
         console.error("Error polling deploy status:", error)
       }
     }
 
+    // Initial poll
+    pollStatus()
+
+    // Continue polling every 5 seconds
     const interval = setInterval(pollStatus, 5000)
     return () => clearInterval(interval)
   }, [deployHash, recoveryStatus])
@@ -250,7 +263,7 @@ export default function RecoveryPage() {
       {/* Navigation */}
       <nav className="relative z-10 border-b border-border/30 px-6 md:px-28 py-6">
         <div className="flex items-center justify-between">
-          <a href="/" className="font-[var(--font-bebas)] text-2xl tracking-tight hover:text-accent transition-colors">
+          <a href="/" className="font-[(--font-bebas)] text-2xl tracking-tight hover:text-accent transition-colors">
             SENTINELX
           </a>
           <div className="flex items-center gap-6">
@@ -279,7 +292,7 @@ export default function RecoveryPage() {
           {/* Header */}
           <div className="mb-16">
             <span className="font-mono text-xs uppercase tracking-[0.3em] text-accent">Phase 2 / Recovery</span>
-            <h1 className="mt-4 font-[var(--font-bebas)] text-5xl md:text-7xl tracking-tight">
+            <h1 className="mt-4 font-[(--font-bebas)] text-5xl md:text-7xl tracking-tight">
               I LOST MY KEY
             </h1>
             <p className="mt-6 max-w-2xl font-mono text-sm text-muted-foreground leading-relaxed">
@@ -327,7 +340,7 @@ export default function RecoveryPage() {
                       className="group inline-flex items-center gap-3 border border-foreground/20 px-6 py-3 font-mono text-xs uppercase tracking-widest text-foreground hover:border-accent hover:text-accent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <ScrambleTextOnHover text={isConnecting ? "Connecting..." : "Connect Protector Key"} as="span" duration={0.6} />
-                      {!isConnecting && <BitmapChevron className="transition-transform duration-[400ms] ease-in-out group-hover:rotate-45" />}
+                      {!isConnecting && <BitmapChevron className="transition-transform duration-400 ease-in-out group-hover:rotate-45" />}
                     </button>
                   )}
                 </div>
@@ -455,7 +468,7 @@ export default function RecoveryPage() {
                       duration={0.6}
                     />
                     {!isSubmitting && (
-                      <BitmapChevron className="transition-transform duration-[400ms] ease-in-out group-hover:rotate-45" />
+                      <BitmapChevron className="transition-transform duration-400 ease-in-out group-hover:rotate-45" />
                     )}
                   </button>
                   <p className="mt-4 font-mono text-xs text-muted-foreground leading-relaxed">
@@ -467,7 +480,7 @@ export default function RecoveryPage() {
               </div>
             )}
 
-            {/* Recovery Submitted Status */}
+            {/* Recovery Submitted/Confirmed Status */}
             {(recoveryStatus === "submitted" || recoveryStatus === "confirmed") && (
               <div className={`border p-6 md:p-8 ${recoveryStatus === "confirmed" ? "border-green-500/30 bg-green-500/5" : "border-accent/30 bg-accent/5"}`}>
                 <h3 className={`font-mono text-xs uppercase tracking-widest mb-4 ${recoveryStatus === "confirmed" ? "text-green-500" : "text-accent"}`}>
@@ -519,6 +532,68 @@ export default function RecoveryPage() {
                         </a>
                       </div>
                     )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Recovery Failed Status */}
+            {recoveryStatus === "failed" && (
+              <div className="border border-red-500/30 bg-red-500/5 p-6 md:p-8">
+                <h3 className="font-mono text-xs uppercase tracking-widest mb-4 text-red-500">
+                  Recovery Failed ✗
+                </h3>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 gap-1">
+                    <span className="font-mono text-xs uppercase tracking-[0.3em] text-muted-foreground">
+                      Account
+                    </span>
+                    <span className="font-mono text-xs text-foreground/80 break-all">
+                      {accountAddress}
+                    </span>
+                  </div>
+                  {deployHash && (
+                    <div className="grid grid-cols-1 gap-1">
+                      <span className="font-mono text-xs uppercase tracking-[0.3em] text-muted-foreground">
+                        Deploy Hash
+                      </span>
+                      <span className="font-mono text-xs text-foreground/80 break-all">
+                        {deployHash}
+                      </span>
+                    </div>
+                  )}
+                  {submitError && (
+                    <div className="p-4 border border-red-500/30 bg-red-500/10 rounded">
+                      <p className="font-mono text-xs text-red-400">
+                        <strong>Error:</strong> {submitError}
+                      </p>
+                    </div>
+                  )}
+                  <div className="pt-4 border-t border-red-500/30">
+                    <p className="font-mono text-sm text-foreground/80 mb-4">
+                      The recovery deploy failed on-chain. This could be due to:
+                    </p>
+                    <ul className="space-y-2 mb-4">
+                      <li className="font-mono text-xs text-muted-foreground">
+                        • Account not initialized with guardians in the contract
+                      </li>
+                      <li className="font-mono text-xs text-muted-foreground">
+                        • Invalid account or key format
+                      </li>
+                      <li className="font-mono text-xs text-muted-foreground">
+                        • Insufficient gas for the transaction
+                      </li>
+                    </ul>
+                    <button
+                      onClick={() => {
+                        setRecoveryStatus("idle")
+                        setSubmitError(null)
+                        setDeployHash(null)
+                      }}
+                      className="inline-flex items-center gap-2 border border-foreground/20 px-6 py-3 font-mono text-xs uppercase tracking-widest text-foreground hover:border-accent hover:text-accent transition-all duration-200"
+                    >
+                      Try Again
+                    </button>
                   </div>
                 </div>
               </div>

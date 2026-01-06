@@ -49,6 +49,7 @@ export interface DeployStatus {
     deployHash: string;
     status: 'pending' | 'success' | 'failed';
     executionResult?: unknown;
+    errorMessage?: string;
 }
 
 export interface SignatureCheckResult {
