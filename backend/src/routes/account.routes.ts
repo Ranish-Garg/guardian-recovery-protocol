@@ -4,6 +4,50 @@ import { ApiResponse } from '../types';
 
 const router = Router();
 
+// ========================================
+// SPECIFIC ROUTES FIRST (before wildcards)
+// ========================================
+
+/**
+ * GET /account/deploy/:deployHash
+ * Get deploy status
+ * NOTE: This must come BEFORE /:publicKey to avoid being matched as publicKey="deploy"
+ */
+router.get('/deploy/:deployHash', async (req: Request, res: Response) => {
+    try {
+        const { deployHash } = req.params;
+        console.log('Getting deploy status for:', deployHash);
+
+        const status = await casperService.getDeployStatus(deployHash);
+        console.log('Deploy status result:', status);
+
+        if (!status) {
+            return res.json({
+                success: true,
+                data: {
+                    deployHash,
+                    status: 'pending',
+                },
+            } as ApiResponse);
+        }
+
+        res.json({
+            success: true,
+            data: status,
+        } as ApiResponse);
+    } catch (error) {
+        console.error('Error getting deploy status:', error);
+        res.status(500).json({
+            success: false,
+            error: `Failed to get deploy status: ${error}`,
+        } as ApiResponse);
+    }
+});
+
+// ========================================
+// PARAMETERIZED ROUTES (wildcards)
+// ========================================
+
 /**
  * GET /account/:publicKey
  * Get account info from the network
@@ -44,28 +88,6 @@ router.get('/:publicKey/keys', async (req: Request, res: Response) => {
         res.status(500).json({
             success: false,
             error: `Failed to get account keys: ${error}`,
-        } as ApiResponse);
-    }
-});
-
-/**
- * GET /account/deploy/:deployHash
- * Get deploy status
- */
-router.get('/deploy/:deployHash', async (req: Request, res: Response) => {
-    try {
-        const { deployHash } = req.params;
-
-        const status = await casperService.getDeployStatus(deployHash);
-
-        res.json({
-            success: true,
-            data: status,
-        } as ApiResponse);
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: `Failed to get deploy status: ${error}`,
         } as ApiResponse);
     }
 });
@@ -120,3 +142,4 @@ router.get('/:publicKey/guardians', async (req: Request, res: Response) => {
 });
 
 export default router;
+

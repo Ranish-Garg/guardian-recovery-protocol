@@ -181,6 +181,14 @@ router.post('/initiate', async (req: Request, res: Response) => {
             } as ApiResponse);
         }
 
+        // Log guardian data from contract dictionary for debugging
+        const contractHash = process.env.RECOVERY_REGISTRY_HASH;
+        if (contractHash) {
+            console.log('\n=== Checking Contract Registry ===');
+            const contractGuardianData = await casperService.getGuardiansFromContract(contractHash, targetAccount);
+            console.log('Contract Guardian Data:', JSON.stringify(contractGuardianData, null, 2));
+        }
+
         const result = await contractService.initiateRecovery(
             initiatorPublicKey,
             targetAccount,

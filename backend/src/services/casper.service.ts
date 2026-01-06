@@ -159,7 +159,100 @@ export class CasperService {
     }
 
     /**
-     * Check if account has guardians registered (checks associated keys)
+     * Query contract dictionary
+     * The contract uses dictionary 'd' to store all data
+     */
+    async queryContractDictionary(contractHash: string, dictionaryName: string, dictionaryKey: string): Promise<any> {
+        try {
+            const stateRootHash = await this.client.nodeClient.getStateRootHash();
+
+            console.log('\n=== Querying Contract Dictionary ===');
+            console.log('Contract Hash:', contractHash);
+            console.log('Dictionary Name:', dictionaryName);
+            console.log('Dictionary Key:', dictionaryKey);
+
+            const result = await this.client.nodeClient.getDictionaryItemByName(
+                stateRootHash,
+                `hash-${contractHash}`,
+                dictionaryName,
+                dictionaryKey
+            );
+
+            console.log('Dictionary Result:', JSON.stringify(result, null, 2));
+            return result;
+        } catch (error) {
+            console.error('Error querying contract dictionary:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Get guardians registered in the contract for an account
+     * Uses the contract's dictionary to look up guardian data
+     */
+    async getGuardiansFromContract(contractHash: string, publicKeyHex: string): Promise<{
+        isInitialized: boolean;
+        guardians: string[];
+        threshold: number;
+    }> {
+        try {
+            const publicKey = CLPublicKey.fromHex(publicKeyHex);
+            const accountHash = publicKey.toAccountHash();
+            const accountHashHex = Buffer.from(accountHash).toString('hex');
+
+            // The contract stores data with keys like "i{:?}" where {:?} is the Debug format of AccountHash
+            // In Rust, AccountHash Debug format is: AccountHash(hex_bytes)
+            const debugFormat = `AccountHash(${accountHashHex})`;
+
+            console.log('\n=== Checking Contract Registry for Account ===');
+            console.log('Public Key:', publicKeyHex);
+            console.log('Account Hash (hex):', accountHashHex);
+            console.log('Debug Format Key: i' + debugFormat);
+
+            // Check if initialized: key is "i{:?}" (e.g., "iAccountHash(abc123...)")
+            const initKey = `i${debugFormat}`;
+            const initResult = await this.queryContractDictionary(contractHash, 'd', initKey);
+
+            const isInitialized = initResult?.stored_value?.CLValue?.data === true;
+            console.log('Is Initialized:', isInitialized);
+
+            if (!isInitialized) {
+                console.log('Account NOT registered in contract dictionary');
+                console.log('========================================\n');
+                return { isInitialized: false, guardians: [], threshold: 0 };
+            }
+
+            // Get guardians: key is "g{:?}"
+            const guardiansKey = `g${debugFormat}`;
+            const guardiansResult = await this.queryContractDictionary(contractHash, 'd', guardiansKey);
+
+            // Get threshold: key is "t{:?}"
+            const thresholdKey = `t${debugFormat}`;
+            const thresholdResult = await this.queryContractDictionary(contractHash, 'd', thresholdKey);
+
+            const guardians = guardiansResult?.stored_value?.CLValue?.data || [];
+            const threshold = thresholdResult?.stored_value?.CLValue?.data || 0;
+
+            console.log('Guardians from contract:', guardians);
+            console.log('Threshold:', threshold);
+            console.log('========================================\n');
+
+            return {
+                isInitialized,
+                guardians: Array.isArray(guardians) ? guardians.map((g: any) =>
+                    typeof g === 'string' ? g : Buffer.from(g).toString('hex')
+                ) : [],
+                threshold: Number(threshold),
+            };
+        } catch (error) {
+            console.error('Error getting guardians from contract:', error);
+            return { isInitialized: false, guardians: [], threshold: 0 };
+        }
+    }
+
+    /**
+     * Check if account has guardians registered (checks associated keys on account)
+     * Note: This checks the ACCOUNT's associated keys, not the contract registry
      */
     async hasGuardians(publicKeyHex: string): Promise<boolean> {
         try {
@@ -169,9 +262,14 @@ export class CasperService {
             // Handle both snake_case and camelCase
             const associatedKeys = accountInfo.Account.associated_keys || accountInfo.Account.associatedKeys || [];
             // If there's more than 1 key, it implies guardians are added
+            console.log('\n=== Account Associated Keys ===');
+            console.log('Public Key:', publicKeyHex);
+            console.log('Associated Keys Count:', associatedKeys.length);
+            console.log('Associated Keys:', JSON.stringify(associatedKeys, null, 2));
+            console.log('========================================\n');
             return associatedKeys.length > 1;
         } catch (error) {
-            console.error(`Error checking has guardians: ${error}`);
+            console.error('Error checking has guardians:', error);
             return false;
         }
     }
@@ -274,7 +372,7 @@ export class CasperService {
                 return {
                     deployHash: '',
                     success: false,
-                    message: `HTTP error ${response.status}: ${response.statusText}. ${errorText}`,
+                    message: `HTTP error ${response.status}: ${response.statusText}.${errorText}`,
                 };
             }
 
@@ -363,30 +461,99 @@ export class CasperService {
         deployHash: string;
         status: 'pending' | 'success' | 'failed';
         executionResult?: any;
+        errorMessage?: string;
     } | null> {
         try {
+            console.log('\n=== Getting Deploy Status ===');
+            console.log('Deploy Hash:', deployHash);
+
             const [deploy, deployResult] = await this.client.getDeploy(deployHash);
 
             let status: 'pending' | 'success' | 'failed' = 'pending';
             let executionResult = null;
+            let errorMessage: string | undefined;
 
-            if (deployResult.execution_results && deployResult.execution_results.length > 0) {
-                const result = deployResult.execution_results[0];
-                executionResult = result;
-                if (result.result.Success) {
-                    status = 'success';
-                } else {
-                    status = 'failed';
+            // Cast to any to handle different API versions
+            const result = deployResult as any;
+
+            // Check for NEW format (Version 2 API): execution_info.execution_result
+            if (result.execution_info?.execution_result) {
+                const execResult = result.execution_info.execution_result;
+                executionResult = execResult;
+
+                console.log('Found execution_info.execution_result');
+
+                // Version2 format
+                if (execResult.Version2) {
+                    const v2 = execResult.Version2;
+                    console.log('Version2 result:', JSON.stringify(v2, null, 2));
+
+                    if (v2.error_message) {
+                        // Has error_message = FAILED
+                        status = 'failed';
+                        errorMessage = v2.error_message;
+                        console.log('Deploy status: FAILED -', errorMessage);
+                    } else {
+                        // No error_message = SUCCESS
+                        status = 'success';
+                        console.log('Deploy status: SUCCESS');
+                    }
+                }
+                // Version1 format
+                else if (execResult.Success || execResult.Failure) {
+                    if (execResult.Success) {
+                        status = 'success';
+                        console.log('Deploy status: SUCCESS (Version1)');
+                    } else {
+                        status = 'failed';
+                        errorMessage = execResult.Failure?.error_message || 'Unknown error';
+                        console.log('Deploy status: FAILED (Version1) -', errorMessage);
+                    }
                 }
             }
+            // Check for OLD format: execution_results array
+            else if (result.execution_results && result.execution_results.length > 0) {
+                const firstResult = result.execution_results[0];
+                executionResult = firstResult;
+
+                console.log('Found execution_results array');
+
+                const resultData = firstResult.result || firstResult;
+
+                if (resultData.Success) {
+                    status = 'success';
+                    console.log('Deploy status: SUCCESS (old format)');
+                } else if (resultData.Failure) {
+                    status = 'failed';
+                    errorMessage = resultData.Failure?.error_message || 'Unknown error';
+                    console.log('Deploy status: FAILED (old format) -', errorMessage);
+                }
+            } else {
+                console.log('No execution results yet - deploy is pending');
+            }
+
+            console.log('Final status:', status);
+            console.log('========================================\n');
 
             return {
                 deployHash,
                 status,
-                executionResult
+                executionResult,
+                errorMessage
             };
-        } catch (error) {
-            console.error(`Error getting deploy status: ${error}`);
+        } catch (error: any) {
+            console.error('Error getting deploy status:', error);
+
+            // If deploy not found, treat as pending
+            if (error.message?.includes('deploy not known') || error.code === -32003) {
+                console.log('Deploy not found - might still be pending or invalid hash');
+                return {
+                    deployHash,
+                    status: 'pending',
+                    errorMessage: 'Deploy not yet indexed by node'
+                };
+            }
+
             return null;
         }
     }
@@ -442,7 +609,7 @@ export class CasperService {
 
             return {
                 account: accountResult.CLValue.data ?
-                    `account-hash-${Buffer.from(accountResult.CLValue.data).toString('hex')}` : '',
+                    `account - hash - ${Buffer.from(accountResult.CLValue.data).toString('hex')}` : '',
                 newKey: newKeyResult?.CLValue?.data || '',
                 approvalCount: Number(countResult?.CLValue?.data) || 0,
                 isApproved: approvedResult?.CLValue?.data === true,

@@ -44,6 +44,9 @@ export class ContractService {
     /**
      * Register account with guardians and threshold
      * Entry Point: init_guardians
+     * 
+     * Uses stored contract call so data is stored in contract's dictionary
+     * (same location where start_recovery looks for it)
      */
     async initializeGuardians(
         userPublicKeyHex: string,
@@ -51,6 +54,8 @@ export class ContractService {
         threshold: number
     ): Promise<DeployResult> {
         const userPublicKey = CLPublicKey.fromHex(userPublicKeyHex);
+
+        // Contract expects account as ByteArray(32), not Key type
         const userAccountHash = new CLAccountHash(userPublicKey.toAccountHash());
 
         const guardianAccountHashes = guardians.map((g) => {
@@ -59,17 +64,16 @@ export class ContractService {
         });
 
         const args = RuntimeArgs.fromMap({
-            action: CLValueBuilder.u8(1), // Action 1: Initialize Guardians
-            account: CLValueBuilder.key(userAccountHash),
+            account: userAccountHash,
             guardians: CLValueBuilder.list(guardianAccountHashes),
             threshold: CLValueBuilder.u8(threshold),
         });
 
-        // Use session WASM deploy instead of stored contract call
-        // The recovery_registry.wasm is designed to be run as session code
-        const deploy = deployService.buildSessionWasmDeploy(
+        // Use stored contract call so data is stored in contract's dictionary
+        // This is where start_recovery will look for the guardian data
+        const deploy = this.buildContractDeploy(
             userPublicKey,
-            config.wasm.recoveryRegistry,
+            'init_guardians',
             args
         );
 
@@ -96,8 +100,11 @@ export class ContractService {
         const targetAccount = CLPublicKey.fromHex(targetAccountHex);
         const newPublicKey = CLPublicKey.fromHex(newPublicKeyHex);
 
+        // Contract expects account as ByteArray(32), not Key type
+        const targetAccountHash = new CLAccountHash(targetAccount.toAccountHash());
+
         const args = RuntimeArgs.fromMap({
-            account: CLValueBuilder.key(new CLAccountHash(targetAccount.toAccountHash())),
+            account: targetAccountHash,
             new_key: newPublicKey,
         });
 
