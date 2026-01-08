@@ -183,6 +183,8 @@ router.post('/initiate', async (req: Request, res: Response) => {
 
         // Log guardian data from contract dictionary for debugging
         const contractHash = process.env.RECOVERY_REGISTRY_HASH;
+        console.log('Using Contract Hash for Deploy:', contractHash);
+
         if (contractHash) {
             console.log('\n=== Checking Contract Registry ===');
             const contractGuardianData = await casperService.getGuardiansFromContract(contractHash, targetAccount);
@@ -448,6 +450,35 @@ router.get('/active/:publicKey', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /recovery/details/:recoveryId
+ * Get recovery details by ID from contract dictionary (off-chain query)
+ */
+router.get('/details/:recoveryId', async (req: Request, res: Response) => {
+    try {
+        const { recoveryId } = req.params;
+
+        const details = await casperService.getRecoveryByIdFromContract(recoveryId);
+
+        if (!details) {
+            return res.status(404).json({
+                success: false,
+                error: 'Recovery not found',
+            } as ApiResponse);
+        }
+
+        res.json({
+            success: true,
+            data: details,
+        } as ApiResponse);
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: `Failed to get recovery details: ${error}`,
+        } as ApiResponse);
+    }
+});
+
+/**
  * GET /recovery/account-status/:publicKey
  * Get guardian configuration for an account (off-chain query)
  */
@@ -474,6 +505,31 @@ router.get('/account-status/:publicKey', async (req: Request, res: Response) => 
         res.status(500).json({
             success: false,
             error: `Failed to get account status: ${error}`,
+        } as ApiResponse);
+    }
+});
+
+/**
+ * GET /recovery/for-guardian/:publicKey
+ * Get all recoveries where the public key is a guardian (off-chain query)
+ */
+router.get('/for-guardian/:publicKey', async (req: Request, res: Response) => {
+    try {
+        const { publicKey } = req.params;
+
+        const recoveries = await casperService.getRecoveriesForGuardian(publicKey);
+
+        res.json({
+            success: true,
+            data: {
+                recoveries,
+                count: recoveries.length,
+            },
+        } as ApiResponse);
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: `Failed to get recoveries for guardian: ${error}`,
         } as ApiResponse);
     }
 });
