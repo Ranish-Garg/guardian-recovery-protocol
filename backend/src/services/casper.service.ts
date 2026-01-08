@@ -619,6 +619,77 @@ export class CasperService {
             return null;
         }
     }
+
+    /**
+     * Get recovery details by ID from the contract dictionary
+     * This queries the contract directly using the recovery ID
+     */
+    async getRecoveryByIdFromContract(recoveryId: string): Promise<{
+        recoveryId: string;
+        account: string | null;
+        newKey: string | null;
+        approvalCount: number;
+        isApproved: boolean;
+    } | null> {
+        try {
+            const contractHash = config.contract.recoveryRegistryHash;
+            if (!contractHash) {
+                console.error('Contract hash not configured');
+                return null;
+            }
+
+            console.log('\n=== Querying Recovery By ID ===');
+            console.log('Recovery ID:', recoveryId);
+
+            // Query the contract dictionary for recovery data
+            // Keys are: ra{id}, rk{id}, rc{id}, ro{id}
+            const [accountResult, newKeyResult, countResult, approvedResult] = await Promise.all([
+                this.queryContractDictionary(contractHash, 'd', `ra${recoveryId}`),
+                this.queryContractDictionary(contractHash, 'd', `rk${recoveryId}`),
+                this.queryContractDictionary(contractHash, 'd', `rc${recoveryId}`),
+                this.queryContractDictionary(contractHash, 'd', `ro${recoveryId}`),
+            ]);
+
+            // If no account found, recovery doesn't exist
+            if (!accountResult?.stored_value?.CLValue?.data) {
+                console.log('Recovery not found');
+                return null;
+            }
+
+            // Parse account hash from the result
+            const accountData = accountResult.stored_value.CLValue.data;
+            const accountHex = typeof accountData === 'string'
+                ? accountData
+                : Buffer.from(accountData).toString('hex');
+
+            // Parse new key from the result
+            const newKeyData = newKeyResult?.stored_value?.CLValue?.data;
+            const newKeyHex = newKeyData
+                ? (typeof newKeyData === 'string' ? newKeyData : Buffer.from(newKeyData).toString('hex'))
+                : null;
+
+            const approvalCount = Number(countResult?.stored_value?.CLValue?.data) || 0;
+            const isApproved = approvedResult?.stored_value?.CLValue?.data === true;
+
+            console.log('Recovery found:');
+            console.log('  Account:', accountHex ? `account-hash-${accountHex}` : 'N/A');
+            console.log('  New Key:', newKeyHex || 'N/A');
+            console.log('  Approval Count:', approvalCount);
+            console.log('  Is Approved:', isApproved);
+            console.log('========================================\n');
+
+            return {
+                recoveryId,
+                account: accountHex ? `account-hash-${accountHex}` : null,
+                newKey: newKeyHex,
+                approvalCount,
+                isApproved,
+            };
+        } catch (error) {
+            console.error(`Error getting recovery by ID from contract: ${error}`);
+            return null;
+        }
+    }
 }
 
 // Export singleton instance
