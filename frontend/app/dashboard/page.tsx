@@ -173,6 +173,7 @@ export default function DashboardPage() {
     const [submitError, setSubmitError] = useState<string | null>(null)
     const [deployHash, setDeployHash] = useState<string | null>(null)
     const [multisigResult, setMultisigResult] = useState<{ signatureCount: number; thresholdMet: boolean } | null>(null)
+    const [finalDeploySent, setFinalDeploySent] = useState(false)
     const [selectedRecovery, setSelectedRecovery] = useState<GuardianRecovery | null>(null)
 
     // Guardian recoveries auto-fetched
@@ -589,7 +590,7 @@ export default function DashboardPage() {
 
             console.log("Multi-sig deploy sent! Hash:", sendResult.data?.deployHash)
             setDeployHash(sendResult.data?.deployHash || null)
-            alert("Recovery multi-sig deploy sent to network successfully!")
+            setFinalDeploySent(true)
 
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "Failed to send final deploy"
@@ -1268,7 +1269,7 @@ export default function DashboardPage() {
                                                 )}
                                             </div>
 
-                                            {multisigResult.thresholdMet && (
+                                            {multisigResult.thresholdMet && !finalDeploySent && (
                                                 <div className="space-y-3">
                                                     <p className="font-mono text-sm text-foreground/80">
                                                         All required signatures have been collected. You can now send the final multi-sig deploy to complete the recovery.
@@ -1280,6 +1281,34 @@ export default function DashboardPage() {
                                                     >
                                                         {isSubmitting ? "Sending..." : "Send Final Deploy"}
                                                     </button>
+                                                </div>
+                                            )}
+
+                                            {multisigResult.thresholdMet && finalDeploySent && (
+                                                <div className="space-y-3">
+                                                    <div className="flex items-center gap-3">
+                                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-500">
+                                                            <polyline points="20 6 9 17 4 12" />
+                                                        </svg>
+                                                        <span className="font-mono text-sm text-green-500">
+                                                            Recovery deploy sent to network successfully!
+                                                        </span>
+                                                    </div>
+                                                    <p className="font-mono text-xs text-muted-foreground">
+                                                        The key rotation deploy has been submitted. It may take a few minutes to be processed on the Casper network.
+                                                    </p>
+                                                    {deployHash && (
+                                                        <div className="mt-2">
+                                                            <a
+                                                                href={`https://testnet.cspr.live/deploy/${deployHash}`}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="font-mono text-xs text-accent hover:underline"
+                                                            >
+                                                                View on CSPR.live →
+                                                            </a>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             )}
 
